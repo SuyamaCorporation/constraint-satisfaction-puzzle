@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Constraint Satisfaction Puzzle Generator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .grid-cell { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; border-radius: 6px; cursor: pointer; transition: all 0.15s; user-select: none; }
+  .grid-cell:hover { transform: scale(1.05); }
+  .clue-cell { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 11px; text-align: center; line-height: 1.2; }
+  #puzzle-grid { display: grid; gap: 3px; }
+</style>
+</head>
+<body class="bg-gray-950 text-white min-h-screen">
+<div class="max-w-4xl mx-auto p-4">
+  <h1 class="text-2xl font-bold text-center text-indigo-400 mb-1">Constraint Satisfaction Puzzle</h1>
+  <p class="text-center text-gray-400 text-sm mb-4">Logic grid puzzles with configurable constraints — hints and difficulty tracking</p>
+
+  <div class="flex flex-wrap gap-4 justify-center">
+    <!-- Puzzle area -->
+    <div class="flex flex-col gap-3">
+      <div id="puzzle-container" class="bg-gray-800 rounded-xl p-4">
+        <div id="puzzle-grid"></div>
+      </div>
+      <div id="win-msg" class="hidden bg-green-800 rounded-xl p-3 text-center text-green-200 font-semibold"></div>
+      <div class="flex gap-2 flex-wrap">
+        <button onclick="getHint()" class="bg-indigo-700 hover:bg-indigo-600 px-4 py-2 rounded-lg text-sm flex-1">💡 Hint</button>
+        <button onclick="checkSolution()" class="bg-emerald-700 hover:bg-emerald-600 px-4 py-2 rounded-lg text-sm flex-1">Check</button>
+        <button onclick="solvePuzzle()" class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-lg text-sm flex-1">Reveal</button>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex flex-col gap-3 w-64">
+      <div class="bg-gray-800 rounded-xl p-4">
+        <h2 class="font-semibold text-indigo-300 mb-3">Generate Puzzle</h2>
+        <div class="space-y-3 text-sm">
+          <div>
+            <label class="text-gray-300 block mb-1">Grid Size</label>
+            <select id="grid-size" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-1.5">
+              <option value="4">4×4 (Easy)</option>
+              <option value="5" selected>5×5 (Medium)</option>
+              <option value="6">6×6 (Hard)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-gray-300 block mb-1">Constraint Density</label>
+            <select id="density" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-1.5">
+              <option value="low">Low (more freedom)</option>
+              <option value="med" selected>Medium</option>
+              <option value="high">High (more constrained)</option>
+            </select>
+          </div>
+          <button onclick="generatePuzzle()" class="w-full bg-indigo-700 hover:bg-indigo-600 px-3 py-2 rounded-lg font-medium">Generate New Puzzle</button>
+        </div>
+      </div>
+
+      <div class="bg-gray-800 rounded-xl p-4">
+        <h2 class="font-semibold text-indigo-300 mb-2">Stats</h2>
+        <div class="space-y-1.5 text-sm">
+          <div class="flex justify-between"><span class="text-gray-400">Time</span><span id="stat-time" class="font-mono text-white">00:00</span></div>
+          <div class="flex justify-between"><span class="text-gray-400">Hints Used</span><span id="stat-hints" class="text-amber-400">0</span></div>
+          <div class="flex justify-between"><span class="text-gray-400">Errors</span><span id="stat-errors" class="text-red-400">0</span></div>
+          <div class="flex justify-between"><span class="text-gray-400">Difficulty</span><span id="stat-diff" class="text-indigo-400">Medium</span></div>
+          <div class="flex justify-between"><span class="text-gray-400">Filled</span><span id="stat-filled" class="text-gray-300">0/0</span></div>
+        </div>
+      </div>
+
+      <div class="bg-gray-800 rounded-xl p-4">
+        <h2 class="font-semibold text-indigo-300 mb-2">Constraints</h2>
+        <div id="constraint-list" class="text-xs text-gray-400 space-y-1.5 max-h-40 overflow-y-auto"></div>
+      </div>
+
+      <div class="bg-gray-800 rounded-xl p-4">
+        <h2 class="font-semibold text-indigo-300 mb-2">Legend</h2>
+        <div class="text-xs space-y-1 text-gray-400">
+          <div class="flex gap-2 items-center"><div class="w-5 h-5 bg-gray-700 rounded flex items-center justify-center text-white font-bold text-xs">?</div> Empty cell — click to fill</div>
+          <div class="flex gap-2 items-center"><div class="w-5 h-5 bg-indigo-700 rounded"></div> Your selection</div>
+          <div class="flex gap-2 items-center"><div class="w-5 h-5 bg-green-800 rounded"></div> Correct</div>
+          <div class="flex gap-2 items-center"><div class="w-5 h-5 bg-red-900 rounded"></div> Incorrect</div>
+          <div class="flex gap-2 items-center"><div class="w-5 h-5 bg-gray-900 rounded border border-amber-500"></div> Hinted</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let size = 5, solution = [], userGrid = [], given = [], constraints = [];
+let startTime, timerInterval, hintsUsed = 0, errors = 0;
+
+function generatePuzzle() {
+  size = parseInt(document.getElementById('grid-size').value);
+  const density = document.getElementById('density').value;
+  hintsUsed = 0; errors = 0;
+  document.getElementById('stat-hints').textContent = 0;
+  document.getElementById('stat-errors').textContent = 0;
+  document.getElementById('win-msg').classList.add('hidden');
+  clearInterval(timerInterval);
+  startTime = Date.now();
+  timerInterval = setInterval(updateTimer, 1000);
+
+  // Generate valid Latin square solution
+  solution = generateLatinSquare(size);
+
+  // Generate constraints based on solution
+  const densityMap = { low: 0.4, med: 0.6, high: 0.8 };
+  constraints = generateConstraints(solution, densityMap[density]);
+
+  // Determine givens (cells revealed initially)
+  given = Array.from({length: size}, () => Array(size).fill(false));
+  userGrid = Array.from({length: size}, () => Array(size).fill(0));
+
+  // Reveal some cells based on difficulty
+  const revealCount = density === 'low' ? Math.floor(size*size*0.35) : density === 'med' ? Math.floor(size*size*0.2) : Math.floor(size*size*0.1);
+  let revealed = 0;
+  while (revealed < revealCount) {
+    const r = Math.floor(Math.random()*size), c = Math.floor(Math.random()*size);
+    if (!given[r][c]) { given[r][c] = true; userGrid[r][c] = solution[r][c]; revealed++; }
+  }
+
+  renderGrid();
+  renderConstraints();
+  const diff = {low:'Easy',med:'Medium',high:'Hard'}[density];
+  document.getElementById('stat-diff').textContent = diff;
+  updateFilled();
+}
+
+function generateLatinSquare(n) {
+  // Generate a valid Latin square (each number 1..n appears once per row and column)
+  const sq = Array.from({length: n}, (_, r) => Array.from({length: n}, (_, c) => ((r + c) % n) + 1));
+  // Shuffle rows and columns for variety
+  for (let i = n-1; i > 0; i--) {
+    const j = Math.floor(Math.random()*(i+1));
+    [sq[i], sq[j]] = [sq[j], sq[i]];
+  }
+  for (let i = n-1; i > 0; i--) {
+    const j = Math.floor(Math.random()*(i+1));
+    for (let r = 0; r < n; r++) [sq[r][i], sq[r][j]] = [sq[r][j], sq[r][i]];
+  }
+  return sq;
+}
+
+function generateConstraints(sq, density) {
+  const c = [];
+  const n = sq.length;
+  // Row sum constraints
+  for (let r = 0; r < n; r++) {
+    if (Math.random() < density) {
+      const sum = sq[r].reduce((s,v) => s+v, 0);
+      c.push({ type: 'rowsum', row: r, value: sum, desc: `Row ${r+1} sums to ${sum}` });
+    }
+  }
+  // Col sum constraints
+  for (let col = 0; col < n; col++) {
+    if (Math.random() < density) {
+      const sum = sq.map(r => r[col]).reduce((s,v) => s+v, 0);
+      c.push({ type: 'colsum', col, value: sum, desc: `Column ${col+1} sums to ${sum}` });
+    }
+  }
+  // Greater-than neighbor constraints
+  for (let r = 0; r < n; r++) {
+    for (let c2 = 0; c2 < n-1; c2++) {
+      if (Math.random() < density * 0.3) {
+        if (sq[r][c2] > sq[r][c2+1]) {
+          c.push({ type: 'gt', r1:r,c1:c2,r2:r,c2:c2+1, desc: `Cell (${r+1},${c2+1}) > Cell (${r+1},${c2+2})` });
+        } else {
+          c.push({ type: 'lt', r1:r,c1:c2,r2:r,c2:c2+1, desc: `Cell (${r+1},${c2+1}) < Cell (${r+1},${c2+2})` });
+        }
+      }
+    }
+  }
+  // Diagonal sum
+  if (Math.random() < density * 0.5) {
+    const diagSum = sq.map((r,i) => r[i]).reduce((s,v) => s+v, 0);
+    c.push({ type: 'diagsum', value: diagSum, desc: `Main diagonal sums to ${diagSum}` });
+  }
+  return c;
+}
+
+function renderGrid() {
+  const grid = document.getElementById('puzzle-grid');
+  grid.style.gridTemplateColumns = `repeat(${size}, 44px)`;
+  grid.innerHTML = '';
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'grid-cell';
+      cell.id = `cell-${r}-${c}`;
+      if (given[r][c]) {
+        cell.style.background = '#1e3a5f';
+        cell.style.color = '#93c5fd';
+        cell.textContent = userGrid[r][c];
+      } else if (userGrid[r][c]) {
+        cell.style.background = '#3730a3';
+        cell.style.color = 'white';
+        cell.textContent = userGrid[r][c];
+        cell.onclick = () => cycleCell(r, c);
+      } else {
+        cell.style.background = '#374151';
+        cell.style.color = '#6b7280';
+        cell.textContent = '?';
+        cell.onclick = () => cycleCell(r, c);
+      }
+      grid.appendChild(cell);
+    }
+  }
+}
+
+function cycleCell(r, c) {
+  if (given[r][c]) return;
+  userGrid[r][c] = (userGrid[r][c] % size) + 1;
+  const cell = document.getElementById(`cell-${r}-${c}`);
+  cell.textContent = userGrid[r][c];
+  cell.style.background = '#4338ca';
+  cell.style.color = 'white';
+  cell.style.border = '';
+  updateFilled();
+  checkAuto();
+}
+
+function updateFilled() {
+  let filled = 0;
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (userGrid[r][c]) filled++;
+  document.getElementById('stat-filled').textContent = `${filled}/${size*size}`;
+}
+
+function checkAuto() {
+  // Auto-check if fully filled
+  let allFilled = true;
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (!userGrid[r][c]) { allFilled = false; break; }
+  if (allFilled) checkSolution();
+}
+
+function checkSolution() {
+  let allCorrect = true;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (given[r][c]) continue;
+      const cell = document.getElementById(`cell-${r}-${c}`);
+      if (userGrid[r][c] === solution[r][c]) {
+        cell.style.background = '#14532d';
+        cell.style.color = '#86efac';
+      } else if (userGrid[r][c]) {
+        cell.style.background = '#450a0a';
+        cell.style.color = '#fca5a5';
+        allCorrect = false;
+        errors++;
+        document.getElementById('stat-errors').textContent = errors;
+      } else {
+        allCorrect = false;
+      }
+    }
+  }
+  if (allCorrect) {
+    clearInterval(timerInterval);
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const msg = document.getElementById('win-msg');
+    msg.textContent = `Solved! Time: ${Math.floor(elapsed/60)}:${String(elapsed%60).padStart(2,'0')} | Hints: ${hintsUsed} | Errors: ${errors}`;
+    msg.classList.remove('hidden');
+  }
+}
+
+function getHint() {
+  // Find a random unfilled incorrect cell and reveal it
+  const empties = [];
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (!given[r][c] && userGrid[r][c] !== solution[r][c]) empties.push([r,c]);
+  if (empties.length === 0) return;
+  const [r, c] = empties[Math.floor(Math.random()*empties.length)];
+  userGrid[r][c] = solution[r][c];
+  given[r][c] = true;
+  const cell = document.getElementById(`cell-${r}-${c}`);
+  cell.textContent = solution[r][c];
+  cell.style.background = '#1c1917';
+  cell.style.border = '2px solid #f59e0b';
+  cell.style.color = '#fbbf24';
+  cell.onclick = null;
+  hintsUsed++;
+  document.getElementById('stat-hints').textContent = hintsUsed;
+  updateFilled();
+}
+
+function solvePuzzle() {
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      userGrid[r][c] = solution[r][c];
+      const cell = document.getElementById(`cell-${r}-${c}`);
+      cell.textContent = solution[r][c];
+      cell.style.background = '#14532d';
+      cell.style.color = '#86efac';
+      cell.onclick = null;
+    }
+  }
+  clearInterval(timerInterval);
+  updateFilled();
+}
+
+function renderConstraints() {
+  const el = document.getElementById('constraint-list');
+  el.innerHTML = constraints.map(c => `<div class="bg-gray-700 px-2 py-1 rounded">📌 ${c.desc}</div>`).join('');
+}
+
+function updateTimer() {
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  const m = Math.floor(elapsed/60), s = elapsed%60;
+  document.getElementById('stat-time').textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+generatePuzzle();
+</script>
+</body>
+</html>
